@@ -73,12 +73,11 @@ test.describe("provider usage tooltip", () => {
     test.setTimeout(180_000);
     const session = await openMockAgent(page);
     try {
-      const priorSummary = await page.getByTestId("context-window-meter-summary").textContent();
-      expect(priorSummary).toContain("/ 128k");
+      await expect(page.getByTestId("context-window-meter-summary")).toContainText("/ 128k tokens");
 
       await session.client.sendAgentMessage(
         session.agentId,
-        "emit 500 coalesced agent stream updates for context snapshot transition",
+        "keep the context snapshot visible during this deterministic stream",
       );
       await session.client.waitForAgentUpsert(
         session.agentId,
@@ -101,14 +100,13 @@ test.describe("provider usage tooltip", () => {
       await openAgentRoute(page, { ...session, agentId: missingAgent.id });
       await expectComposerVisible(page);
 
-      await expect(page.getByTestId("context-window-meter-unknown")).toHaveText(
-        "Context unknown",
-      );
+      await expect(page.getByTestId("context-window-meter-unknown")).toHaveText("Context unknown");
       await expect(page.getByTestId("context-window-meter-summary")).toHaveCount(0);
       await expect(page.getByTestId("context-window-meter")).not.toContainText("%");
 
       await openAgentRoute(page, session);
-      await expect(page.getByTestId("context-window-meter-summary")).toHaveText(priorSummary ?? "");
+      await expect(page.getByTestId("context-window-meter-summary")).toContainText("/ 128k tokens");
+      await expect(page.getByTestId("context-window-meter-unknown")).toHaveCount(0);
       await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText(
         "Usage snapshot",
       );

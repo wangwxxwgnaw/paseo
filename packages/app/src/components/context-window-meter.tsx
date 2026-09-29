@@ -296,7 +296,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   snapshotCue: {
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   unavailableContainer: {
