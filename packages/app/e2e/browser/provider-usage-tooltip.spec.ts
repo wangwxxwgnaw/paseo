@@ -51,7 +51,9 @@ test.describe("provider usage tooltip", () => {
       expect(usageFixture.requestCount()).toBe(0);
 
       await expect(page.getByTestId("context-window-meter-summary")).toContainText("/ 128k");
-      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText("Last turn");
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText(
+        "Usage snapshot",
+      );
 
       await page.getByTestId("context-window-meter").hover();
       await usageFixture.waitForRequestCount(1);
@@ -74,6 +76,20 @@ test.describe("provider usage tooltip", () => {
       const priorSummary = await page.getByTestId("context-window-meter-summary").textContent();
       expect(priorSummary).toContain("/ 128k");
 
+      await session.client.sendAgentMessage(
+        session.agentId,
+        "emit 500 coalesced agent stream updates for context snapshot transition",
+      );
+      await session.client.waitForAgentUpsert(
+        session.agentId,
+        (snapshot) => snapshot.status === "running",
+        15_000,
+      );
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText(
+        "Usage snapshot",
+      );
+      await session.client.waitForFinish(session.agentId, 30_000);
+
       const missingAgent = await session.client.createAgent({
         provider: "mock",
         cwd: session.cwd,
@@ -93,7 +109,9 @@ test.describe("provider usage tooltip", () => {
 
       await openAgentRoute(page, session);
       await expect(page.getByTestId("context-window-meter-summary")).toHaveText(priorSummary ?? "");
-      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText("Last turn");
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText(
+        "Usage snapshot",
+      );
     } finally {
       await session.cleanup();
     }

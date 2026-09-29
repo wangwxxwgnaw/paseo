@@ -287,7 +287,6 @@ function renderContextWindowMeter(
   serverId: string,
   provider: string | null,
   pending: boolean,
-  showSnapshotCue: boolean,
   glyphSize: number,
 ): ReactElement | null {
   return (
@@ -299,7 +298,6 @@ function renderContextWindowMeter(
       serverId={serverId}
       provider={provider}
       pending={pending}
-      showSnapshotCue={showSnapshotCue}
       glyphSize={glyphSize}
     />
   );
@@ -2086,7 +2084,6 @@ function ComposerContentImpl({
         serverId,
         agentState.provider,
         contextWindowPending,
-        !contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
     [
