@@ -3,15 +3,16 @@ import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { installProviderUsageFixture } from "../support/helpers/provider-usage";
 
-const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 async function openMockAgent(page: Page) {
-  await page.setViewportSize(MOBILE_VIEWPORT);
+  await page.setViewportSize(DESKTOP_VIEWPORT);
   const session = await seedMockAgentWorkspace({
     repoPrefix: "provider-usage-tooltip-",
     title: "Provider usage tooltip e2e",
     initialPrompt: "emit 1 coalesced agent stream update for provider usage tooltip.",
   });
+  await session.client.waitForFinish(session.agentId, 30_000);
   await openAgentRoute(page, session);
   await expectComposerVisible(page);
   await expect(page.getByTestId("context-window-meter")).toBeVisible({ timeout: 30_000 });
@@ -49,6 +50,9 @@ test.describe("provider usage tooltip", () => {
     try {
       expect(usageFixture.requestCount()).toBe(0);
 
+      await expect(page.getByTestId("context-window-meter-summary")).toContainText("/ 128k");
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText("Last turn");
+
       await page.getByTestId("context-window-meter").hover();
       await usageFixture.waitForRequestCount(1);
 
@@ -58,6 +62,38 @@ test.describe("provider usage tooltip", () => {
       await expect(page.getByText("Test plan")).toBeVisible();
       await expect(page.getByText("Session", { exact: true })).toBeVisible();
       await expect(page.getByText("42%")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("replaces selected-agent usage with an honest missing-data state", async ({ page }) => {
+    test.setTimeout(180_000);
+    const session = await openMockAgent(page);
+    try {
+      const priorSummary = await page.getByTestId("context-window-meter-summary").textContent();
+      expect(priorSummary).toContain("/ 128k");
+
+      const missingAgent = await session.client.createAgent({
+        provider: "mock",
+        cwd: session.cwd,
+        workspaceId: session.workspaceId,
+        title: "Context data unavailable",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+      });
+      await openAgentRoute(page, { ...session, agentId: missingAgent.id });
+      await expectComposerVisible(page);
+
+      await expect(page.getByTestId("context-window-meter-unknown")).toHaveText(
+        "Context unknown",
+      );
+      await expect(page.getByTestId("context-window-meter-summary")).toHaveCount(0);
+      await expect(page.getByTestId("context-window-meter")).not.toContainText("%");
+
+      await openAgentRoute(page, session);
+      await expect(page.getByTestId("context-window-meter-summary")).toHaveText(priorSummary ?? "");
+      await expect(page.getByTestId("context-window-meter-snapshot-cue")).toHaveText("Last turn");
     } finally {
       await session.cleanup();
     }

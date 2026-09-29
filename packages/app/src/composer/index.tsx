@@ -287,12 +287,9 @@ function renderContextWindowMeter(
   serverId: string,
   provider: string | null,
   pending: boolean,
+  showSnapshotCue: boolean,
   glyphSize: number,
 ): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
-    return null;
-  }
   return (
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
@@ -302,6 +299,7 @@ function renderContextWindowMeter(
       serverId={serverId}
       provider={provider}
       pending={pending}
+      showSnapshotCue={showSnapshotCue}
       glyphSize={glyphSize}
     />
   );
@@ -2084,16 +2082,18 @@ function ComposerContentImpl({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
-        false,
+        isCompactLayout,
         serverId,
         agentState.provider,
         contextWindowPending,
+        !contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
     [
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
+      isCompactLayout,
       serverId,
       agentState.provider,
       contextWindowPending,
@@ -2569,7 +2569,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   contextWindowMeterSlot: {
-    width: 28,
     height: 28,
     flexShrink: 0,
     alignItems: "center",
