@@ -2644,6 +2644,132 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test.each(["glm-5.2[1m]", "GLM-5.2[1M]"])(
+    "custom model %s publishes its context limit before the first result",
+    async (model) => {
+      const session = await createSessionForTurns(
+        [[{ ...createInitMessage(), model }, createMessageStartEvent(), createSuccessResult()]],
+        { model },
+      );
+      try {
+        expect(await collectStreamEvents(session)).toContainEqual(
+          expect.objectContaining({
+            type: "usage_updated",
+            usage: { contextWindowMaxTokens: 1_000_000, contextWindowUsedTokens: 150 },
+          }),
+        );
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test("settings aliases use the resolved custom model from SDK init", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          { ...createInitMessage(), model: "glm-5.2[1m]" },
+          createMessageStartEvent(),
+          createSuccessResult(),
+        ],
+      ],
+      { model: "sonnet" },
+    );
+    try {
+      expect(await collectStreamEvents(session)).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: { contextWindowMaxTokens: 1_000_000, contextWindowUsedTokens: 150 },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("AIGW final input usage replaces the zero placeholder across requests and turns", async () => {
+    const delta = (input: number, output: number) => ({
+      ...createMessageDeltaEvent(output),
+      event: { type: "message_delta", usage: { input_tokens: input, output_tokens: output } },
+    });
+    const start = () => createMessageStartEvent({ input_tokens: 0, output_tokens: 0 });
+    const result = () =>
+      createSuccessResult({
+        modelUsage: { "glm-5.2": { contextWindow: 433_000 } },
+        // Session totals must not replace the last request's context usage.
+        usage: { input_tokens: 900_000, output_tokens: 99_999 },
+      });
+    const session = await createSessionForTurns(
+      [
+        [
+          { ...createInitMessage(), model: "glm-5.2[1m]" },
+          start(),
+          delta(120_000, 40),
+          start(),
+          delta(125_000, 80),
+          result(),
+        ],
+        [start(), delta(130_000, 20), result()],
+      ],
+      { model: "glm-5.2[1m]" },
+    );
+    try {
+      const first = await collectStreamEvents(session);
+      expect(first).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: { contextWindowMaxTokens: 1_000_000, contextWindowUsedTokens: 120_040 },
+        }),
+      );
+      expect(first).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({
+            contextWindowMaxTokens: 433_000,
+            contextWindowUsedTokens: 125_080,
+          }),
+        }),
+      );
+      const second = await collectStreamEvents(session);
+      expect(second).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: { contextWindowMaxTokens: 433_000, contextWindowUsedTokens: 130_020 },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("partial final input usage preserves cache tokens from message_start", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 1,
+          cache_creation_input_tokens: 200,
+          cache_read_input_tokens: 300,
+        }),
+        {
+          ...createMessageDeltaEvent(25),
+          event: { type: "message_delta", usage: { input_tokens: 10, output_tokens: 25 } },
+        },
+        createSuccessResult(),
+      ],
+    ]);
+    try {
+      expect(await collectStreamEvents(session)).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: { contextWindowUsedTokens: 535 },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   test("message_delta stream events update per-request usage", async () => {
     const session = await createSessionForTurns([
       [

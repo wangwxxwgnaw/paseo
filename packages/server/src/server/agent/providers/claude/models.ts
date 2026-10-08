@@ -48,6 +48,17 @@ export function findClaudeModel(
   return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
+/** Claude Code's explicit 1M modifier also applies to custom gateway model IDs. */
+export function resolveClaudeContextWindowMaxTokens(
+  modelId: string | null | undefined,
+): number | undefined {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (/^.+\[1m\]$/i.test(trimmed)) {
+    return 1_000_000;
+  }
+  return findClaudeModel(modelId)?.contextWindowMaxTokens;
+}
+
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,

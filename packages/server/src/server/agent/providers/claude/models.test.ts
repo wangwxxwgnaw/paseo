@@ -13,7 +13,12 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
-import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  findClaudeModel,
+  getClaudeModels,
+  normalizeClaudeRuntimeModelId,
+  resolveClaudeContextWindowMaxTokens,
+} from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -455,6 +460,21 @@ describe("findClaudeModel", () => {
       1_000_000,
     );
   });
+});
+
+describe("resolveClaudeContextWindowMaxTokens", () => {
+  it("uses an explicit 1M modifier without pretending a custom model is Claude", () => {
+    expect(resolveClaudeContextWindowMaxTokens(" glm-5.2[1M] ")).toBe(1_000_000);
+    expect(findClaudeModel("glm-5.2[1m]")).toBeUndefined();
+    expect(resolveClaudeContextWindowMaxTokens("claude-sonnet-4-6")).toBe(200_000);
+  });
+
+  it.each([undefined, null, "", "glm-5.2", "[1m]", "glm-5.2[1m]-other"])(
+    "does not invent a context limit for %s",
+    (model) => {
+      expect(resolveClaudeContextWindowMaxTokens(model)).toBeUndefined();
+    },
+  );
 });
 
 describe("Claude Opus 5 catalog", () => {

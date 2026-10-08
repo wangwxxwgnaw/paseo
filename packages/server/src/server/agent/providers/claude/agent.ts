@@ -31,9 +31,9 @@ import {
   readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import {
-  findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeContextWindowMaxTokens,
   resolveConfiguredClaudeModel,
 } from "./models.js";
 import {
@@ -1795,8 +1795,8 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
+function readStreamRequestInputTokens(value: unknown): number | undefined {
+  const messageUsage = toObjectRecord(value);
   if (!messageUsage) {
     return undefined;
   }
@@ -1893,6 +1893,7 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
 
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
+  private streamRequestInputUsage: Record<string, unknown> | undefined;
   private streamRequestInputTokens: number | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
@@ -1903,6 +1904,7 @@ class ClaudeContextUsageState {
   }
 
   beginTurn(): void {
+    this.streamRequestInputUsage = undefined;
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
@@ -1910,6 +1912,11 @@ class ClaudeContextUsageState {
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
+  }
+
+  seedRuntimeContextWindow(modelId: string): void {
+    // Preserve a limit already reported by the SDK's result modelUsage.
+    this.contextWindowMaxTokens ??= resolveClaudeContextWindowMaxTokens(modelId);
   }
 
   recordModelUsage(modelUsage: unknown): number | undefined {
@@ -1927,13 +1934,24 @@ class ClaudeContextUsageState {
     }
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
-      const inputTokens = readStreamRequestInputTokens(streamEvent);
+      const inputUsage = toObjectRecord(toObjectRecord(streamEvent.message)?.usage);
+      const inputTokens = readStreamRequestInputTokens(inputUsage);
       if (typeof inputTokens !== "number") {
         return null;
       }
+      this.streamRequestInputUsage = inputUsage;
       this.streamRequestInputTokens = inputTokens;
       this.streamRequestOutputTokens = 0;
     } else if (eventType === "message_delta") {
+      // Gateway streams may only learn prompt usage at the end of a request.
+      // AIGW sends zero at message_start and the actual input count here.
+      // Deltas are partial: retain any cache counts only supplied at the start.
+      const inputUsage = { ...this.streamRequestInputUsage, ...toObjectRecord(streamEvent.usage) };
+      const inputTokens = readStreamRequestInputTokens(inputUsage);
+      if (inputTokens !== undefined) {
+        this.streamRequestInputUsage = inputUsage;
+        this.streamRequestInputTokens = inputTokens;
+      }
       const outputTokens = readStreamRequestOutputTokens(streamEvent);
       if (typeof outputTokens !== "number") {
         return null;
@@ -2010,6 +2028,7 @@ class ClaudeContextUsageState {
   }
 
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
+    this.streamRequestInputUsage = undefined;
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
@@ -2121,7 +2140,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.contextUsage = new ClaudeContextUsageState(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      resolveClaudeContextWindowMaxTokens(this.config.model),
     );
     const handle = options.handle;
 
@@ -2434,7 +2453,7 @@ class ClaudeAgentSession implements AgentSession {
       await this.applyFastModeFeature(false, activeQuery);
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      resolveClaudeContextWindowMaxTokens(this.config.model),
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -4573,6 +4592,11 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.persistence = null;
     if (message.model) {
+      // Claude Code resolves settings aliases such as "sonnet" to gateway IDs.
+      // Learn custom 1M limits before the first stream usage event arrives.
+      if (/\[1m\]$/i.test(message.model)) {
+        this.contextUsage.seedRuntimeContextWindow(message.model);
+      }
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
       this.logger.debug(
         { runtimeModel: message.model, normalizedRuntimeModel },
